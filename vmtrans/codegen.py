@@ -28,12 +28,12 @@ def push_on_stack(is_constant=False):
 def pop_from_stack():
     machine_instructions = [
         do_c_instruction('D', 'A'),
-        load_symbol('R11'),
+        load_symbol('R13'),
         do_c_instruction('M', 'D'),
         load_symbol('SP'),
         do_c_instruction('AM', 'M-1'),
         do_c_instruction('D', 'M'),
-        resolve_symbol('R11'),
+        resolve_symbol('R13'),
         do_c_instruction('M', 'D'),
     ]
 

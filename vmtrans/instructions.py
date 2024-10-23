@@ -68,9 +68,9 @@ class PopInstruction(VMInstruction):
 class AddInstruction(VMInstruction):
     def to_hack_code(self):
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
@@ -83,9 +83,9 @@ class AddInstruction(VMInstruction):
 class SubInstruction(VMInstruction):
     def to_hack_code(self):
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
@@ -122,9 +122,9 @@ class EqualInstruction(VMInstruction):
         ]
 
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
@@ -152,9 +152,9 @@ class GreaterThanInstruction(VMInstruction):
         ]
 
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
@@ -182,9 +182,9 @@ class LessThanInstruction(VMInstruction):
         ]
 
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
@@ -211,9 +211,9 @@ class AndInstruction(VMInstruction):
         ]
 
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
@@ -242,9 +242,9 @@ class OrInstruction(VMInstruction):
         ]
 
         machine_instructions = [
-            load_symbol('R11'),
+            load_symbol('R13'),
             pop_from_stack(),
-            load_symbol('R11'),
+            load_symbol('R13'),
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
