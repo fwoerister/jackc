@@ -1,212 +1,221 @@
-from codegen import load_to_a_register, do_c_instruction, push_on_stack, pop_from_stack, conditional_execution
+from vmtrans.codegen import resolve_symbol, do_c_instruction, push_on_stack, pop_from_stack, conditional_execution, \
+    load_symbol
 
 
 class VMInstruction:
+    count = 1
+
     def __init__(self, cmd, arg1, arg2, filename):
         self.cmd = cmd
         self.arg1 = arg1
         self.arg2 = arg2
         self.filename = filename
 
-    def to_hack_code(self):
-        raise NotImplementedError()
+        VMInstruction.count += 1
 
-    def args_to_base_and_offset(self) -> (str, int):
+    def to_hack_code(self):
+        return f'//{self.cmd} {self.arg1 if self.arg1 else ''} {self.arg2 if self.arg2 else ''}\n'
+
+    def args_to_symbol_and_offset(self) -> (str, int):
         if self.arg1 == 'constant':
             return str(self.arg2), 0
         elif self.arg1 == 'static':
             return f'{self.filename}.{self.arg2}', 0
         elif self.arg1 == 'pointer':
             return 'THIS' if self.arg2 == 0 else 'THAT', 0
+        elif self.arg1 == 'this':
+            return 'THIS', int(self.arg2)
+        elif self.arg1 == 'that':
+            return 'THAT', int(self.arg2)
         elif self.arg1 == 'argument':
-            return 'ARG', self.arg2
+            return 'ARG', int(self.arg2)
         elif self.arg1 == 'local':
-            return 'LCL', self.arg2
+            return 'LCL', int(self.arg2)
         elif self.arg1 == 'temp':
-            return 'TMP', self.arg2
+            return 'TMP', int(self.arg2)
 
 
 class PushInstruction(VMInstruction):
     def to_hack_code(self):
-        base, offset = self.args_to_base_and_offset()
-        return push_on_stack(base, offset)
+        symbol, offset = self.args_to_symbol_and_offset()
+        symbol_handling_instructions = []
+
+        if not symbol.isdigit():
+            symbol_handling_instructions.append(resolve_symbol(symbol, offset))
+        else:
+            symbol_handling_instructions.append(load_symbol(symbol))
+
+        symbol_handling_code = '\n'.join(symbol_handling_instructions) + '\n'
+
+        return super().to_hack_code() + symbol_handling_code + push_on_stack(is_constant=symbol.isdigit())
 
 
 class PopInstruction(VMInstruction):
     def to_hack_code(self):
-        base, offset = self.args_to_base_and_offset()
-        return pop_from_stack(base, offset)
+        symbol, offset = self.args_to_symbol_and_offset()
+        symbol_handling_instructions = []
+
+        if not symbol.isdigit():
+            symbol_handling_instructions.append(resolve_symbol(symbol, offset))
+        else:
+            symbol_handling_instructions.append(load_symbol(symbol))
+
+        symbol_handling_code = '\n'.join(symbol_handling_instructions) + '\n'
+
+        return super().to_hack_code() + symbol_handling_code + pop_from_stack()
 
 
 class AddInstruction(VMInstruction):
     def to_hack_code(self):
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', 'D+M'),
         ]
 
-        return ''.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class SubInstruction(VMInstruction):
     def to_hack_code(self):
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', 'D-M'),
+            do_c_instruction('M', 'M-D'),
         ]
 
-        return ''.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class NegInstruction(VMInstruction):
     def to_hack_code(self):
         machine_instructions = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '!M'),
         ]
 
-        return ''.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class EqualInstruction(VMInstruction):
-    count = 1
-
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
-        self.id = EqualInstruction.count
-        EqualInstruction.count += 1
 
     def to_hack_code(self):
         code_true = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '-1'),
         ]
 
         code_false = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '0'),
         ]
 
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', 'D-M'),
             conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JEQ',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
 
-        return '\n'.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class GreaterThanInstruction(VMInstruction):
-    count = 1
-
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
-        self.id = GreaterThanInstruction.count
-        EqualInstruction.count += 1
 
     def to_hack_code(self):
         code_true = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '-1'),
         ]
 
         code_false = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '0'),
         ]
 
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', 'D-M'),
             conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JGT',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
 
-        return '\n'.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class LessThanInstruction(VMInstruction):
-    count = 1
-
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
-        self.id = LessThanInstruction.count
-        EqualInstruction.count += 1
 
     def to_hack_code(self):
         code_true = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '-1'),
         ]
 
         code_false = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '0'),
         ]
 
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', 'D-M'),
             conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JLT',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
-        return '\n'.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class AndInstruction(VMInstruction):
-    count = 1
-
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
-        self.id = AndInstruction.count
-        EqualInstruction.count += 1
 
     def to_hack_code(self):
         code_true = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '-1'),
         ]
 
         code_false = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '0'),
         ]
 
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', 'D+M'),
             do_c_instruction('M', 'M+1'),
@@ -214,71 +223,60 @@ class AndInstruction(VMInstruction):
             conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JEQ',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
-        return '\n'.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class OrInstruction(VMInstruction):
-    count = 1
-
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
-        self.id = OrInstruction.count
-        EqualInstruction.count += 1
 
     def to_hack_code(self):
         code_true = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '-1'),
         ]
 
         code_false = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '0'),
         ]
 
         machine_instructions = [
-            pop_from_stack('R13'),
-            load_to_a_register('R13'),
+            load_symbol('R11'),
+            pop_from_stack(),
+            load_symbol('R11'),
             do_c_instruction('D', 'M'),
-            load_to_a_register('SP'),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', 'D+M'),
             conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JNE',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
-        return '\n'.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class NotInstruction(VMInstruction):
-    count = 1
-
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
-        self.id = NotInstruction.count
-        EqualInstruction.count += 1
 
     def to_hack_code(self):
         code_true = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '-1'),
         ]
 
         code_false = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '0'),
         ]
 
         machine_instructions = [
-            load_to_a_register('SP', 0),
+            resolve_symbol('SP', 0),
             do_c_instruction('A', 'A-1'),
             conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JEQ',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
-        return '\n'.join(machine_instructions)
+        return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class InstructionFactory:
@@ -289,8 +287,8 @@ class InstructionFactory:
         'sub': SubInstruction,
         'neg': NegInstruction,
         'eq': EqualInstruction,
-        'greater': GreaterThanInstruction,
-        'less': LessThanInstruction,
+        'gt': GreaterThanInstruction,
+        'lt': LessThanInstruction,
         'and': AndInstruction,
         'or': OrInstruction,
         'not': NotInstruction,
@@ -304,8 +302,8 @@ class InstructionFactory:
         command_tokens = stripped_inst.split(' ')
 
         cmd = command_tokens[0]
-        arg1 = command_tokens[1] if len(command_tokens) == 2 else None
-        arg2 = command_tokens[2] if len(command_tokens) == 2 else None
+        arg1 = command_tokens[1] if len(command_tokens) == 3 else None
+        arg2 = command_tokens[2] if len(command_tokens) == 3 else None
 
         command_cls = InstructionFactory.commands[cmd]
         return command_cls(cmd, arg1, arg2, self.filename)

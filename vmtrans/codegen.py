@@ -1,6 +1,6 @@
 def conditional_execution(tag, value, condition, code=None, else_code=None):
     machine_instructions = [
-        jump(f'@{tag}_TRUE', value, condition),
+        jump(f'{tag}_TRUE', value, condition),
         else_code,
         jump(f'{tag}_END'),
         f'({tag}_TRUE)',
@@ -11,57 +11,61 @@ def conditional_execution(tag, value, condition, code=None, else_code=None):
     return '\n'.join(machine_instructions)
 
 
-def push_on_stack(base, offset=0):
-    machine_instructions = [
-        load_to_a_register(base, offset),
-        do_c_instruction('D', 'M'),
-        load_to_a_register('SP'),
-        do_c_instruction('A', 'M'),
-        do_c_instruction('M', 'D'),
-        load_to_a_register('SP'),
-        do_c_instruction('M', 'M+1'),
-    ]
-
-    return '\n'.join(machine_instructions)
-
-
-def pop_from_stack(base, offset=0):
-    machine_instructions = [
-        load_to_a_register('SP'),
-        do_c_instruction('A', 'M'),
-        do_c_instruction('M', 'M-1'),
-        do_c_instruction('D', 'M'),
-        load_to_a_register(base, offset),
-        do_c_instruction('M', 'D'),
-    ]
-
-    return '\n'.join(machine_instructions)
-
-
-def load_to_a_register(symbol, offset=0):
+def push_on_stack(is_constant=False):
     machine_instructions = []
 
-    if offset != 0:
+    machine_instructions.extend([
+        do_c_instruction('D', 'A' if is_constant else 'M'),
+        resolve_symbol('SP'),
+        do_c_instruction('M', 'D'),
+        load_symbol('SP'),
+        do_c_instruction('M', 'M+1'),
+    ])
+
+    return '\n'.join(machine_instructions)
+
+
+def pop_from_stack():
+    machine_instructions = [
+        do_c_instruction('D', 'A'),
+        load_symbol('R11'),
+        do_c_instruction('M', 'D'),
+        load_symbol('SP'),
+        do_c_instruction('AM', 'M-1'),
+        do_c_instruction('D', 'M'),
+        resolve_symbol('R11'),
+        do_c_instruction('M', 'D'),
+    ]
+
+    return '\n'.join(machine_instructions)
+
+
+def resolve_symbol(symbol, offset=0):
+    machine_instructions = []
+
+    if offset > 1:
         machine_instructions.extend([
-            f'@{offset}',
+            load_symbol(offset),
             do_c_instruction('D', 'A'),
         ])
 
     machine_instructions.append(f'@{symbol}')
+    machine_instructions.append(do_c_instruction('A', 'M'))
 
-    if offset != 0:
+    if offset == 1:
+        machine_instructions.append(do_c_instruction('A', 'A+1'))
+    elif offset > 1:
         machine_instructions.append(do_c_instruction('A', 'D+A'))
 
     return '\n'.join(machine_instructions)
 
 
-def do_c_instruction(dest, comp):
-    asm_instruction = f'{dest}=' if dest else ''
-    asm_instruction += comp
-    if jump:
-        asm_instruction += f';{jump}'
+def load_symbol(symbol):
+    return f'@{symbol}'
 
-    return asm_instruction
+
+def do_c_instruction(dest, comp):
+    return f'{dest}={comp}'
 
 
 def jump(target, value='0', condition='JMP'):
@@ -75,8 +79,7 @@ def jump(target, value='0', condition='JMP'):
 
 def infinity_loop():
     machine_instructions = [
-        '@END',
-        '(END',
-        '0;JMP',
+        '(END)',
+        jump('END'),
     ]
     return '\n'.join(machine_instructions)
