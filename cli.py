@@ -24,6 +24,5 @@ def parse_source(vm, source):
         target.write(infinity_loop())
 
 
-
 if __name__ == '__main__':
     parse_source()
