@@ -16,13 +16,13 @@ class VMInstruction:
     def to_hack_code(self):
         return f'//{self.cmd} {self.arg1 if self.arg1 else ''} {self.arg2 if self.arg2 else ''}\n'
 
-    def args_to_symbol_and_offset(self) -> (str, int):
+    def args_to_symbol_and_offset(self) -> (str, int, bool):
         if self.arg1 == 'constant':
             return str(self.arg2), 0
         elif self.arg1 == 'static':
             return f'{self.filename}.{self.arg2}', 0
         elif self.arg1 == 'pointer':
-            return 'THIS' if self.arg2 == 0 else 'THAT', 0
+            return 'THIS', int(self.arg2)
         elif self.arg1 == 'this':
             return 'THIS', int(self.arg2)
         elif self.arg1 == 'that':
@@ -34,35 +34,51 @@ class VMInstruction:
         elif self.arg1 == 'temp':
             return 'TMP', int(self.arg2)
 
+    def do_symbol_deref(self):
+        return self.cmd in ['this', 'that', 'argument', 'local']
 
-class PushInstruction(VMInstruction):
-    def to_hack_code(self):
+
+class StackOperation(VMInstruction):
+    def __init__(self, cmd, arg1, arg2, filename):
+        super().__init__(cmd, arg1, arg2, filename)
+
+    def load_target_address(self):
         symbol, offset = self.args_to_symbol_and_offset()
-        symbol_handling_instructions = []
+        machine_instructions = []
 
-        if not symbol.isdigit():
-            symbol_handling_instructions.append(resolve_symbol(symbol, offset))
+        if offset > 1:
+            machine_instructions.extend([
+                load_symbol(offset),
+                do_c_instruction('D', 'A')
+            ])
+
+        machine_instructions.append(load_symbol(symbol))
+
+        if self.do_symbol_deref():
+            machine_instructions.append('A=M')
+
+        if offset == 1:
+            machine_instructions.append(do_c_instruction('A', 'A+1'))
+        elif offset > 1:
+            machine_instructions.append(do_c_instruction('A', 'D+A'))
+
+        return '\n'.join(machine_instructions) + '\n'
+
+    def load_target_value(self):
+        if self.arg1 == 'constant':
+            return self.load_target_address() + 'D=A\n'
         else:
-            symbol_handling_instructions.append(load_symbol(symbol))
-
-        symbol_handling_code = '\n'.join(symbol_handling_instructions) + '\n'
-
-        return super().to_hack_code() + symbol_handling_code + push_on_stack(is_constant=symbol.isdigit())
+            return self.load_target_address() + 'D=M\n'
 
 
-class PopInstruction(VMInstruction):
+class PushInstruction(StackOperation):
     def to_hack_code(self):
-        symbol, offset = self.args_to_symbol_and_offset()
-        symbol_handling_instructions = []
+        return super().to_hack_code() + self.load_target_value() + push_on_stack()
 
-        if not symbol.isdigit():
-            symbol_handling_instructions.append(resolve_symbol(symbol, offset))
-        else:
-            symbol_handling_instructions.append(load_symbol(symbol))
 
-        symbol_handling_code = '\n'.join(symbol_handling_instructions) + '\n'
-
-        return super().to_hack_code() + symbol_handling_code + pop_from_stack()
+class PopInstruction(StackOperation):
+    def to_hack_code(self):
+        return super().to_hack_code() + self.load_target_address() + pop_from_stack()
 
 
 class AddInstruction(VMInstruction):
@@ -101,6 +117,7 @@ class NegInstruction(VMInstruction):
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
             do_c_instruction('M', '!M'),
+            do_c_instruction('M', 'M+1')
         ]
 
         return super().to_hack_code() + '\n'.join(machine_instructions)
@@ -128,8 +145,8 @@ class EqualInstruction(VMInstruction):
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', 'D-M'),
-            conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JEQ',
+            do_c_instruction('D', 'D-M'),
+            conditional_execution(tag=f'EQ_{self.count}', value='D', condition='JEQ',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
 
@@ -158,8 +175,8 @@ class GreaterThanInstruction(VMInstruction):
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', 'D-M'),
-            conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JGT',
+            do_c_instruction('D', 'M-D'),
+            conditional_execution(tag=f'EQ_{self.count}', value='D', condition='JGT',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
 
@@ -188,28 +205,17 @@ class LessThanInstruction(VMInstruction):
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', 'D-M'),
-            conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JLT',
+            do_c_instruction('D', 'M-D'),
+            conditional_execution(tag=f'EQ_{self.count}', value='D', condition='JLT',
                                   code='\n'.join(code_true), else_code='\n'.join(code_false))
         ]
+
         return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class AndInstruction(VMInstruction):
 
     def to_hack_code(self):
-        code_true = [
-            resolve_symbol('SP', 0),
-            do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', '-1'),
-        ]
-
-        code_false = [
-            resolve_symbol('SP', 0),
-            do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', '0'),
-        ]
-
         machine_instructions = [
             load_symbol('R13'),
             pop_from_stack(),
@@ -217,30 +223,15 @@ class AndInstruction(VMInstruction):
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', 'D+M'),
-            do_c_instruction('M', 'M+1'),
-            do_c_instruction('M', 'M+1'),
-            conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JEQ',
-                                  code='\n'.join(code_true), else_code='\n'.join(code_false))
+            do_c_instruction('M', 'D&M'),
         ]
+
         return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class OrInstruction(VMInstruction):
 
     def to_hack_code(self):
-        code_true = [
-            resolve_symbol('SP', 0),
-            do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', '-1'),
-        ]
-
-        code_false = [
-            resolve_symbol('SP', 0),
-            do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', '0'),
-        ]
-
         machine_instructions = [
             load_symbol('R13'),
             pop_from_stack(),
@@ -248,34 +239,21 @@ class OrInstruction(VMInstruction):
             do_c_instruction('D', 'M'),
             resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', 'D+M'),
-            conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JNE',
-                                  code='\n'.join(code_true), else_code='\n'.join(code_false))
+            do_c_instruction('M', 'D|M'),
         ]
+
         return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
 class NotInstruction(VMInstruction):
 
     def to_hack_code(self):
-        code_true = [
-            resolve_symbol('SP', 0),
-            do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', '-1'),
-        ]
-
-        code_false = [
-            resolve_symbol('SP', 0),
-            do_c_instruction('A', 'A-1'),
-            do_c_instruction('M', '0'),
-        ]
-
         machine_instructions = [
-            resolve_symbol('SP', 0),
+            resolve_symbol('SP'),
             do_c_instruction('A', 'A-1'),
-            conditional_execution(tag=f'EQ_{self.count}', value='M', condition='JEQ',
-                                  code='\n'.join(code_true), else_code='\n'.join(code_false))
+            do_c_instruction('M', '!M'),
         ]
+
         return super().to_hack_code() + '\n'.join(machine_instructions)
 
 

@@ -15,7 +15,6 @@ def push_on_stack(is_constant=False):
     machine_instructions = []
 
     machine_instructions.extend([
-        do_c_instruction('D', 'A' if is_constant else 'M'),
         resolve_symbol('SP'),
         do_c_instruction('M', 'D'),
         load_symbol('SP'),
@@ -82,4 +81,5 @@ def infinity_loop():
         '(END)',
         jump('END'),
     ]
+
     return '\n'.join(machine_instructions)
