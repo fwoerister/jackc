@@ -1,13 +1,18 @@
+import ntpath
+
 from vmtrans.instructions import InstructionFactory
 
 
 class Parser(object):
-    def __init__(self, filename):
-        self.filename = filename
-        self.factory = InstructionFactory(filename[:-3].split('/')[-1])
+    @staticmethod
+    def parse(filename):
+        basename = ntpath.basename(filename)
+        if '.vm' in basename:
+            basename = basename[:basename.index('.vm')]
 
-    def parse(self):
-        with open(self.filename, 'r') as source:
+        factory = InstructionFactory(basename)
+
+        with open(filename, 'r') as source:
             for line in source:
 
                 line = line.strip()
@@ -15,4 +20,4 @@ class Parser(object):
                 if not line or line.startswith('//'):
                     continue
 
-                yield self.factory.create_instruction(line)
+                yield factory.create_instruction(line)

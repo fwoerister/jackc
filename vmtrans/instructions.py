@@ -1,15 +1,16 @@
 from vmtrans.codegen import resolve_symbol, do_c_instruction, push_on_stack, pop_from_stack, conditional_execution, \
-    load_symbol
+    load_symbol, jump
 
 
 class VMInstruction:
     count = 1
 
-    def __init__(self, cmd, arg1, arg2, filename):
+    def __init__(self, cmd, arg1, arg2, filename, func_name):
         self.cmd = cmd
         self.arg1 = arg1
         self.arg2 = arg2
         self.filename = filename
+        self.func_symbol = func_name
 
         VMInstruction.count += 1
 
@@ -32,15 +33,13 @@ class VMInstruction:
         elif self.arg1 == 'local':
             return 'LCL', int(self.arg2)
         elif self.arg1 == 'temp':
-            return 'TMP', int(self.arg2)
+            return f'R{5 + int(self.arg2)}', 0
 
     def do_symbol_deref(self):
-        return self.cmd in ['this', 'that', 'argument', 'local']
+        return self.arg1 in ['this', 'that', 'argument', 'local']
 
 
 class StackOperation(VMInstruction):
-    def __init__(self, cmd, arg1, arg2, filename):
-        super().__init__(cmd, arg1, arg2, filename)
 
     def load_target_address(self):
         symbol, offset = self.args_to_symbol_and_offset()
@@ -257,6 +256,138 @@ class NotInstruction(VMInstruction):
         return super().to_hack_code() + '\n'.join(machine_instructions)
 
 
+class ConditionalBranchInstruction(VMInstruction):
+    def to_hack_code(self):
+        return super().to_hack_code() + '\n'.join([
+            pop_from_stack(d_reg_only=True),
+            jump(f'{self.func_symbol}${self.arg1}', 'D', 'JNE')
+        ])
+
+
+class UnconditionalBranchInstruction(VMInstruction):
+    def to_hack_code(self):
+        return super().to_hack_code() + jump(f'{self.func_symbol}${self.arg1}')
+
+
+class LabelInstruction(VMInstruction):
+    def to_hack_code(self):
+        if self.func_symbol:
+            return super().to_hack_code() + f'({self.func_symbol}${self.arg1})'
+        else:
+            return super().to_hack_code() + f'({self.arg1})'
+
+
+class CallFunctionInstruction(VMInstruction):
+    def to_hack_code(self):
+        return super().to_hack_code() + '\n'.join([
+            # push return Address
+            load_symbol(f'{self.arg1}$ret.{self.count}'),
+            do_c_instruction('D', 'A'),
+            push_on_stack(),
+            # push LCL
+            load_symbol('LCL'),
+            do_c_instruction('D', 'M'),
+            push_on_stack(),
+            # push ARG
+            load_symbol('ARG'),
+            do_c_instruction('D', 'M'),
+            push_on_stack(),
+            # push THIS
+            load_symbol('THIS'),
+            do_c_instruction('D', 'M'),
+            push_on_stack(),
+            # push THAT
+            load_symbol('THAT'),
+            do_c_instruction('D', 'M'),
+            push_on_stack(),
+            # ARG = SP - 5 - nArgs
+            load_symbol('SP'),
+            do_c_instruction('D', 'M'),
+            load_symbol('5'),
+            do_c_instruction('D', 'D-A'),
+            load_symbol(f'{self.arg2}'),
+            do_c_instruction('D', 'D-A'),
+            load_symbol('ARG'),
+            do_c_instruction('M', 'D'),
+            # LCL = SP
+            load_symbol('SP'),
+            do_c_instruction('D', 'M'),
+            load_symbol('LCL'),
+            do_c_instruction('M', 'D'),
+            # goto f
+            jump(f'{self.arg1}'),
+            # ( returnAddress )
+            f'({self.arg1}$ret.{self.count})',
+        ])
+
+
+class DefineFunctionInstruction(VMInstruction):
+    def to_hack_code(self):
+        machine_instructions = [
+            f'({self.func_symbol})',
+            do_c_instruction('D', '0'),
+        ]
+
+        machine_instructions.extend([push_on_stack(is_constant=True)] * int(self.arg2))
+
+        return super().to_hack_code() + '\n'.join(machine_instructions)
+
+
+class ReturnInstruction(VMInstruction):
+    def to_hack_code(self):
+        machine_instructions = [
+
+            # R13 = return Address
+            load_symbol('LCL'),
+            do_c_instruction('D', 'M'),
+            load_symbol('5'),
+            do_c_instruction('A', 'D-A'),
+            do_c_instruction('D', 'M'),
+            load_symbol('R14'),
+            do_c_instruction('M', 'D'),
+
+            # *ARG = pop()
+            load_symbol('ARG'),
+            do_c_instruction('A', 'M'),
+            pop_from_stack(),
+            # SP = ARG + 1
+            load_symbol('ARG'),
+            do_c_instruction('D', 'M+1'),
+            load_symbol('SP'),
+            do_c_instruction('M', 'D'),
+            # THAT = *(frame - 1)
+            load_symbol('LCL'),
+            do_c_instruction('AM', 'M-1'),
+            do_c_instruction('D', 'M'),
+            load_symbol('THAT'),
+            do_c_instruction('M', 'D'),
+            # THIS = *(frame - 2)
+            load_symbol('LCL'),
+            do_c_instruction('AM', 'M-1'),
+            do_c_instruction('D', 'M'),
+            load_symbol('THIS'),
+            do_c_instruction('M', 'D'),
+            # ARG  = *(frame - 3)
+            load_symbol('LCL'),
+            do_c_instruction('AM', 'M-1'),
+            do_c_instruction('D', 'M'),
+            load_symbol('ARG'),
+            do_c_instruction('M', 'D'),
+            # LCL  = *(frame - 4)
+            load_symbol('LCL'),
+            do_c_instruction('AM', 'M-1'),
+            do_c_instruction('D', 'M'),
+            load_symbol('LCL'),
+            do_c_instruction('M', 'D'),
+            # goto retAddr
+            load_symbol('R14'),
+            do_c_instruction('A', 'M'),
+            jump(),
+        ]
+
+        return super().to_hack_code() + '\n'.join(machine_instructions)
+
+
 class InstructionFactory:
     commands = {
         'push': PushInstruction,
@@ -270,18 +401,32 @@ class InstructionFactory:
         'and': AndInstruction,
         'or': OrInstruction,
         'not': NotInstruction,
+        'label': LabelInstruction,
+        'goto': UnconditionalBranchInstruction,
+        'if-goto': ConditionalBranchInstruction,
+        'call': CallFunctionInstruction,
+        'function': DefineFunctionInstruction,
+        'return': ReturnInstruction,
     }
 
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self, namespace):
+        self.namespace = namespace
+        self.active_func = None
 
     def create_instruction(self, instruction):
-        stripped_inst = instruction.strip()
+        if "//" in instruction:
+            stripped_inst = instruction[:instruction.index("//")].strip()
+        else:
+            stripped_inst = instruction.strip()
+
         command_tokens = stripped_inst.split(' ')
 
         cmd = command_tokens[0]
-        arg1 = command_tokens[1] if len(command_tokens) == 3 else None
-        arg2 = command_tokens[2] if len(command_tokens) == 3 else None
+        arg1 = command_tokens[1] if len(command_tokens) >= 2 else None
+        arg2 = command_tokens[2] if len(command_tokens) >= 3 else None
+
+        if cmd == 'function':
+            self.active_func = arg1
 
         command_cls = InstructionFactory.commands[cmd]
-        return command_cls(cmd, arg1, arg2, self.filename)
+        return command_cls(cmd, arg1, arg2, self.namespace, self.active_func)
